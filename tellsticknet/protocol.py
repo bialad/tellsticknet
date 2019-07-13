@@ -17,7 +17,7 @@ TAG_SEP = ord(":")
 
 def _expect(condition):
     if not condition:
-        raise RuntimeError()
+        raise ValueError()
 
 
 def _encode_bytes(s):
@@ -96,12 +96,12 @@ def _encode_dict(d):
     >>> _encode_dict([])
     Traceback (most recent call last):
         ...
-    RuntimeError
+    ValueError
 
     >>> _encode_dict(None)
     Traceback (most recent call last):
         ...
-    RuntimeError
+    ValueError
     """
     _expect(isinstance(d, dict))
 
@@ -159,12 +159,12 @@ def _decode_string(packet):
     >>> _decode_string(b'5:hell')
     Traceback (most recent call last):
         ...
-    RuntimeError
+    ValueError
 
     >>> _decode_string(b'hello')
     Traceback (most recent call last):
         ...
-    RuntimeError
+    ValueError
     """
     sep = packet.find(TAG_SEP)
     _expect(sep > 0)
@@ -291,7 +291,7 @@ def _decode(**packet):
         import importlib
 
         module = importlib.import_module(modname)
-        func = getattr(module, "decode")
+        func = module.decode
 
         # convert any _class=foo to class=foo
         packet = _fixup(func(packet.copy()))
@@ -333,6 +333,7 @@ def encode(**device):
 
 def _decode_command(packet):
     command, rest = _decode_any(packet)
+    _expect(len(rest))
     args, rest = _decode_any(rest)
     _expect(len(rest) == 0)
     _expect(isinstance(command, str))
@@ -369,7 +370,11 @@ A:fineoffset4:datai488029FF9Ass"
     if isinstance(packet, str):
         packet = packet.encode()
 
-    command, args = _decode_command(packet)
+    try:
+        command, args = _decode_command(packet)
+    except ValueError:
+        _LOGGER.error("Skipping malformed packet <%s>", packet)
+        return None
 
     if command == "zwaveinfo":
         _LOGGER.info("Got Z-Wave info packet")

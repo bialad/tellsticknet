@@ -95,20 +95,34 @@ def method_for_str(s):
     return next((k for k, v in STATES.items() if s == v), None)
 
 
-def read_credentials():
-    """Read credentials from ~/.config/mosquitto_pub."""
-    with open(
-        join(
-            env.get("XDG_CONFIG_HOME", join(expanduser("~"), ".config")),
-            "mosquitto_pub",
-        )
-    ) as f:
-        d = dict(
-            line.replace("-", "").split() for line in f.read().splitlines()
-        )
-        return dict(
-            host=d["h"], port=d["p"], username=d["username"], password=d["pw"]
-        )
+def get_mqtt_url():
+    """Reads MQTT configuration from $MQTT_URL or ~/.config/mosquitto_pub."""
+
+    ENV_KEY = "MQTT_URL"
+
+    if ENV_KEY in env:
+        _LOGGER.debug("%s found in env, using it", ENV_KEY)
+        return env[ENV_KEY]
+
+    try:
+        with open(
+            join(
+                env.get("XDG_CONFIG_HOME", join(expanduser("~"), ".config")),
+                "mosquitto_pub",
+            )
+        ) as f:
+            config = dict(
+                line.replace("-", "").split() for line in f.read().splitlines()
+            )
+            username = config["username"]
+            password = config["pw"]
+            host = config["h"]
+            port = int(config["p"])
+            protocol = "mqtt" if port == 1883 else "mqtts"
+            _LOGGER.debug("MQTT credentials loaded from %s", f.name)
+            return f"{protocol}://{username}:{password}@{host}:{port}"
+    except (OSError, KeyError):
+        return None
 
 
 def whitelisted(
@@ -212,7 +226,10 @@ class Device:
         if not self.is_recipient(packet):
             return False
 
-        if self.is_command:
+        if self.is_binary_sensor or self.sensor is not None:
+            await self.publish_discovery()
+
+        if self.is_command or self.is_binary_sensor:
             method = method_for_str(packet["method"])
             state = STATES[method]
             await self.publish_availability()
@@ -229,7 +246,6 @@ class Device:
                 for item in packet["data"]
                 if item["name"] == self.sensor
             )
-            await self.publish_discovery()  # imples availability
             await self.publish_state(state)
         else:
             # Delegate to aggregate of sensors
@@ -281,12 +297,16 @@ class Device:
         return self.name
 
     @property
+    def is_binary_sensor(self):
+        return self.component == "binary_sensor"
+
+    @property
     def is_sensor(self):
-        return "sensorId" in self.entity
+        return self.component == "sensor"
 
     @property
     def is_command(self):
-        return not self.is_sensor
+        return self.component in ["switch", "light", "lock"]
 
     @property
     def is_binary(self):
@@ -306,6 +326,8 @@ class Device:
     def unique_id(self):
         if self.is_command:
             return ("command", self.component, self.name.lower())
+        elif self.is_binary_sensor:
+            return (self.component, self.name.lower())
         elif self.is_sensor:
             return ("sensor", self.name.lower(), self.quantity_name.lower())
         _LOGGER.error("Should not happen")
@@ -368,7 +390,6 @@ class Device:
         res = dict(
             name=self.visible_name,
             state_topic=self.state_topic,
-            retain=True,
             availability_topic=self.availability_topic,
             payload_available=STATE_ONLINE,
             payload_not_available=STATE_OFFLINE,
@@ -382,7 +403,7 @@ class Device:
         if self.is_sensor:
             res.update(unit_of_measurement=self.unit)
         if self.is_command:
-            res.update(optimistic=self.optimistic)
+            res.update(optimistic=self.optimistic, retain=True)
         if self.is_binary:
             res.update(payload_on=STATE_ON, payload_off=STATE_OFF)
         if self.is_light:
@@ -471,9 +492,6 @@ async def run(discover, config):
         logging.WARNING
     )
 
-    _LOGGER.debug("Reading credentials")
-    credentials = read_credentials()
-
     client_id = "tellsticknet_{hostname}_{time}".format(
         hostname=hostname(), time=time()
     )
@@ -482,25 +500,14 @@ async def run(discover, config):
 
     mqtt = MQTTClient(client_id=client_id)
 
-    url = credentials.get("url")
-
-    if not url:
-        try:
-            username = credentials["username"]
-            password = credentials["password"]
-            host = credentials["host"]
-            port = credentials["port"]
-            protocol = "mqtt" if port == 1883 else "mqtts"
-            url = f"{protocol}://{username}:{password}@{host}:{port}"
-        except Exception as e:
-            exit(e)
+    mqtt_url = get_mqtt_url()
 
     devices_setup = asyncio.Event()
 
     async def mqtt_task():
         try:
             _LOGGER.info("Connecting")
-            await mqtt.connect(url, cleansession=False)
+            await mqtt.connect(uri=mqtt_url, cleansession=False)
             _LOGGER.info("Connected to MQTT server")
         except ConnectException as e:
             exit("Could not connect to MQTT server: %s" % e)

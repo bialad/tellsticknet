@@ -148,7 +148,7 @@ async def main(args):
     elif args["mock"]:
         from tellsticknet.discovery import mock
 
-        mock()
+        await mock()
         exit()
     elif args["devices"]:
         for e in (e for e in read_config() if "sensorId" not in e):
@@ -232,7 +232,7 @@ async def main(args):
         )
 
 
-if __name__ == "__main__":
+def app_main():
     args = docopt.docopt(__doc__, version=__version__)
 
     debug = args["-d"]
@@ -263,3 +263,7 @@ if __name__ == "__main__":
         asyncio.run(main(args), debug=debug)  # pylint: disable=no-member
     except KeyboardInterrupt:
         exit()
+
+
+if __name__ == "__main__":
+    app_main()
