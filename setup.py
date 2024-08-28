@@ -9,7 +9,6 @@ setup(
     version="0.1.2",
     description="Listen for UDP sensor broadcasts from a Tellstick",
     url="https://github.com/molobrakos/tellsticknet",
-    license="?",
     author="Erik Eriksson",
     author_email="error.errorsson@gmail.com",
     keywords="tellstick",
@@ -22,4 +21,7 @@ setup(
         "console_scripts": ["tellsticknet=tellsticknet.__main__:app_main"]
     },
     zip_safe=False,
+    classifiers=[
+        "License :: OSI Approved :: MIT License",
+    ],
 )
